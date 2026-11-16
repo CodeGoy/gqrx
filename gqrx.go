@@ -1,6 +1,7 @@
 package gqrx
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -21,11 +22,13 @@ const (
 	GQRX_Set_Sql          = "L SQL"
 	GQRX_Get_LNA_Gain     = "l LNA_GAIN"
 	GQRX_Set_LNA_Gain     = "L LNA_GAIN"
-	GQRX_Close_conn       = "Q"
-	GQRX_Get_Mute         = "u MUTE"
-	GQRX_Set_Mute         = "U MUTE"
 	GQRX_Get_AF           = "l AF" // get audio gain
 	GQRX_Set_AF           = "L AF"
+	GQRX_Get_Mute         = "u MUTE"
+	GQRX_Set_Mute         = "U MUTE"
+	GQRX_Get_DSP          = "u DSP"
+	GQRX_Set_DSP          = "U DSP"
+	GQRX_Close_conn       = "Q"
 )
 
 type GQRX struct {
@@ -48,14 +51,21 @@ func (g *GQRX) Init() {
 	}()
 }
 
+// GetDSP get DSP status
+func (g *GQRX) GetDSP() (int, error) {
+	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_DSP)
+	return toInt(<-g.telnet.Message)
+}
+
+// SetDSP set DSP status
+func (g *GQRX) SetDSP(input int) {
+	g.telnet.Send <- fmt.Sprintf("%s %d", GQRX_Set_DSP, input)
+}
+
 // GetFreq get current frequency in Hz as int
-func (g *GQRX) GetFreq() int {
+func (g *GQRX) GetFreq() (int, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_Freq)
-	parsedInt, err := strconv.ParseInt(<-g.telnet.Message, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return int(parsedInt)
+	return toInt(<-g.telnet.Message)
 }
 
 // SetFreq set listen frequency in Hz as int, 1Mhz = 1000000
@@ -79,26 +89,18 @@ func (g *GQRX) GetDemod() string {
 }
 
 // GetSigStrength
-func (g *GQRX) GetSigStrength() float64 {
+func (g *GQRX) GetSigStrength() (float64, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_Sig_Strength)
-	parsedFloat, err := strconv.ParseFloat(<-g.telnet.Message, 64)
-	if err != nil {
-		return 0
-	}
-	return parsedFloat
+	return toFloat(<-g.telnet.Message)
 }
 
-// GetLnaGain
-func (g *GQRX) GetLnaGain() float64 {
+// GetLnaGain get LNA gain, range 0.0 - 50.0
+func (g *GQRX) GetLnaGain() (float64, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_LNA_Gain)
-	parsedFloat, err := strconv.ParseFloat(<-g.telnet.Message, 64)
-	if err != nil {
-		return 0
-	}
-	return parsedFloat
+	return toFloat(<-g.telnet.Message)
 }
 
-// SetLnaGain
+// SetLnaGain set LNA gain, range 0.0 - 50.0
 func (g *GQRX) SetLnaGain(gain float64) {
 	if gain > 50 || gain < 0 {
 		fmt.Println("gain must be between 0 and 50")
@@ -107,14 +109,10 @@ func (g *GQRX) SetLnaGain(gain float64) {
 	g.telnet.Send <- fmt.Sprintf("%s %f", GQRX_Set_LNA_Gain, gain)
 }
 
-// GetSql
-func (g *GQRX) GetSql() float64 {
+// GetSql range -150.0db - 0.0db
+func (g *GQRX) GetSql() (float64, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_Sql)
-	parsedFloat, err := strconv.ParseFloat(<-g.telnet.Message, 64)
-	if err != nil {
-		return 0
-	}
-	return parsedFloat
+	return toFloat(<-g.telnet.Message)
 }
 
 // SetSql range -150.0db - 0.0db
@@ -127,13 +125,9 @@ func (g *GQRX) SetSql(input float64) {
 }
 
 // GetAF get audio gain
-func (g *GQRX) GetAF() float64 {
+func (g *GQRX) GetAF() (float64, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_AF)
-	parsedFloat, err := strconv.ParseFloat(<-g.telnet.Message, 64)
-	if err != nil {
-		return 0
-	}
-	return parsedFloat
+	return toFloat(<-g.telnet.Message)
 }
 
 // SetAF set audio gain range -80.0 - 50.0
@@ -146,13 +140,9 @@ func (g *GQRX) SetAF(input float64) {
 }
 
 // GetMute get mute status, 0 = false(unmuted), 1 = true(muted)
-func (g *GQRX) GetMute() int {
+func (g *GQRX) GetMute() (int, error) {
 	g.telnet.Send <- fmt.Sprintf("%s", GQRX_Get_Mute)
-	parsedInt, err := strconv.ParseInt(<-g.telnet.Message, 0, 64)
-	if err != nil {
-		return 0
-	}
-	return int(parsedInt)
+	return toInt(<-g.telnet.Message)
 }
 
 // SetMute set audio mute, 0 = false(unmuted), 1 = true(muted)
@@ -171,8 +161,26 @@ func (g *GQRX) CloseConnection() {
 
 // CommandHelp print command help
 func (g *GQRX) CommandHelp(command string) {
-	g.telnet.Send <- fmt.Sprintf("%s %s", command, "?")
+	g.telnet.Send <- fmt.Sprintf("%s", "?")
 	for {
 		fmt.Println(<-g.telnet.Message)
 	}
+}
+
+func toInt(input string) (int, error) {
+	if input == "RPRT 1" {
+		return 0, errors.New("command failed")
+	}
+	parsedInt, err := strconv.ParseInt(input, 0, 64)
+	if err != nil {
+		return 0, err
+	}
+	return int(parsedInt), nil
+}
+
+func toFloat(input string) (float64, error) {
+	if input == "RPRT 1" {
+		return 0.0, errors.New("command failed")
+	}
+	return strconv.ParseFloat(input, 64)
 }
